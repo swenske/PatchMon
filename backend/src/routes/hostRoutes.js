@@ -2415,9 +2415,9 @@ router.get("/install", async (req, res) => {
 		// Get architecture parameter (only set if explicitly provided, otherwise let script auto-detect)
 		const architecture = req.query.arch;
 
-		// Get OS parameter for script (linux | freebsd); default linux for backward compatibility
+		// Get OS parameter for script (linux | freebsd | openbsd); default linux for backward compatibility
 		let os = req.query.os || "linux";
-		const validOss = ["linux", "freebsd"];
+		const validOss = ["linux", "freebsd", "openbsd"];
 		if (!validOss.includes(os)) {
 			os = "linux";
 		}
