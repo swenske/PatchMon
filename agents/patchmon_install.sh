@@ -173,7 +173,7 @@ if [ -z "$ARCHITECTURE" ]; then
     
     # Map architecture to supported values
     case "$arch_raw" in
-        "x86_64")
+        "x86_64"|"amd64")
             ARCHITECTURE="amd64"
             ;;
         "i386"|"i686")

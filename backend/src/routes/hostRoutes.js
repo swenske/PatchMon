@@ -455,8 +455,8 @@ router.post(
 			.withMessage("Compliance enabled must be a boolean"),
 		body("expected_platform")
 			.optional()
-			.isIn(["linux", "freebsd"])
-			.withMessage("expected_platform must be linux or freebsd"),
+			.isIn(["linux", "freebsd", "openbsd"])
+			.withMessage("expected_platform must be linux, freebsd, or openbsd"),
 	],
 	async (req, res) => {
 		try {
