@@ -9,7 +9,7 @@ const { v4: uuidv4 } = require("uuid");
 const crypto = require("node:crypto");
 const bcrypt = require("bcryptjs");
 const logger = require("../utils/logger");
-const { authenticateToken } = require("../middleware/auth");
+const { authenticateToken, authenticateTokenOrApiToken } = require("../middleware/auth");
 const {
 	requireViewHosts,
 	requireManageHosts,
@@ -1335,7 +1335,7 @@ router.post(
 
 router.put(
 	"/bulk/groups",
-	authenticateToken,
+	authenticateTokenOrApiToken,
 	requireManageHosts,
 	[
 		body("hostIds").isArray().withMessage("Host IDs must be an array"),
@@ -1448,7 +1448,7 @@ router.put(
 // Admin endpoint to update host groups (many-to-many)
 router.put(
 	"/:hostId/groups",
-	authenticateToken,
+	authenticateTokenOrApiToken,
 	requireManageHosts,
 	[body("groupIds").isArray().optional()],
 	async (req, res) => {
