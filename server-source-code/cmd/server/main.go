@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 	_ "time/tzdata"
@@ -86,6 +88,8 @@ func main() {
 	var poolCache *hostctx.PoolCache
 	var redisCache *hostctx.RedisCache
 	if cfg.RegistryDatabaseURL != "" {
+		hostctx.EnableMultiContextChecks()
+
 		// Poll interval is a failsafe - the primary path for registry updates is the
 		// immediate reload webhook (POST /api/v1/internal/reload-registry-map) triggered
 		// by the provisioner after every context create/update/delete.
@@ -133,18 +137,44 @@ func main() {
 
 	queueSrv := queue.NewServer(queueOpts, registry, db, slog)
 	notifyEmit := notifications.NewEmitter(queueClient, rdb, slog)
+	// Re-resolve patch-run stall timeout per sweep so DB edits take effect on
+	// the next 10-min cron tick without requiring a server restart. Falls
+	// back to the env-loaded value if the DB read fails.
+	getPatchRunStallTimeoutMin := func() int {
+		s, err := settingsStore.GetFirst(context.Background())
+		if err != nil {
+			return cfg.PatchRunStallTimeoutMin
+		}
+		r := config.ResolveConfig(context.Background(), cfg, s)
+		return r.PatchRunStallTimeoutMin
+	}
+	// Same closure shape for the Agent Activity retention sweep — operators
+	// can edit AGENT_REPORTS_RETENTION_DAYS via Settings → Environment and
+	// the next daily sweep picks up the change.
+	getAgentReportsRetentionDays := func() int {
+		s, err := settingsStore.GetFirst(context.Background())
+		if err != nil {
+			return cfg.AgentReportsRetentionDays
+		}
+		r := config.ResolveConfig(context.Background(), cfg, s)
+		return r.AgentReportsRetentionDays
+	}
+	warnIfSSGContentMissing(cfg.SSGContentDir, slog)
+
 	queueMux := queue.Mux(queue.MuxOpts{
-		Registry:      registry,
-		DB:            db,
-		RDB:           rdb,
-		RedisCache:    redisCache,
-		PoolCache:     poolCache,
-		QueueClient:   queueClient,
-		ServerVersion: cfg.Version,
-		SSGContentDir: cfg.SSGContentDir,
-		Log:           slog,
-		Emit:          notifyEmit,
-		Enc:           enc,
+		Registry:                     registry,
+		DB:                           db,
+		RDB:                          rdb,
+		RedisCache:                   redisCache,
+		PoolCache:                    poolCache,
+		QueueClient:                  queueClient,
+		ServerVersion:                cfg.Version,
+		SSGContentDir:                cfg.SSGContentDir,
+		Log:                          slog,
+		Emit:                         notifyEmit,
+		Enc:                          enc,
+		GetPatchRunStallTimeoutMin:   getPatchRunStallTimeoutMin,
+		GetAgentReportsRetentionDays: getAgentReportsRetentionDays,
 	})
 	go func() {
 		if err := queueSrv.Run(queueMux); err != nil {
@@ -173,11 +203,24 @@ func main() {
 	// waiting for the next daily 5 AM scheduled run.
 	go func() {
 		time.Sleep(30 * time.Second)
-		ssgTask := asynq.NewTask(queue.TypeSSGUpdateCheck, []byte("{}"))
+		ssgTask := asynq.NewTask(queue.TypeSSGUpdateCheck, nil)
 		if _, err := queueClient.Enqueue(ssgTask, asynq.Queue(queue.QueueSSGUpdateCheck)); err != nil {
 			slog.Debug("startup ssg-update-check enqueue skipped", "error", err)
 		} else {
 			slog.Info("startup ssg-update-check enqueued")
+		}
+	}()
+
+	// Refresh the package stats matview shortly after startup so the
+	// Packages page reflects up-to-date counters after every deploy
+	// rather than waiting up to 2 minutes for the next scheduled run.
+	go func() {
+		time.Sleep(15 * time.Second)
+		t := asynq.NewTask(queue.TypePackageStatsRefresh, nil)
+		if _, err := queueClient.Enqueue(t, asynq.Queue(queue.QueuePackageStatsRefresh)); err != nil {
+			slog.Debug("startup package-stats-refresh enqueue skipped", "error", err)
+		} else {
+			slog.Info("startup package-stats-refresh enqueued")
 		}
 	}()
 
@@ -212,6 +255,18 @@ func main() {
 		}
 	}()
 
+	// Profiling listens on its own loopback-only port. See internal/server/pprof.go.
+	var pprofSrv *http.Server
+	if cfg.EnablePprof {
+		pprofSrv = server.NewPprofServer(cfg.PprofPort)
+		go func() {
+			slog.Info("pprof listening", "addr", pprofSrv.Addr)
+			if err := pprofSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("pprof server", "error", err)
+			}
+		}()
+	}
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -236,8 +291,40 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	if pprofSrv != nil {
+		if err := pprofSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("pprof shutdown", "error", err)
+		}
+	}
+
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("shutdown", "error", err)
 	}
 	slog.Info("server stopped")
+}
+
+// warnIfSSGContentMissing surfaces an empty SSG content directory at startup.
+// Content is baked into the server image at build time and agents have no other
+// source for it, so an empty directory silently disables compliance content
+// updates fleet-wide. Better to say so in the logs than to let operators find
+// out from stale SSG versions weeks later.
+func warnIfSSGContentMissing(dir string, log *slog.Logger) {
+	if dir == "" {
+		log.Warn("SSG content directory is not configured; compliance content updates are unavailable", "env", "SSG_CONTENT_DIR")
+		return
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		log.Warn("SSG content directory is unreadable; compliance content updates are unavailable", "dir", dir, "error", err)
+		return
+	}
+
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), "-ds.xml") {
+			return
+		}
+	}
+
+	log.Warn("SSG content directory contains no datastream files; compliance content updates are unavailable", "dir", dir)
 }
