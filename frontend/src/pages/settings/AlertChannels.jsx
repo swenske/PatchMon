@@ -21,6 +21,7 @@ import { useMemo, useState } from "react";
 import { SiDiscord, SiNtfy } from "react-icons/si";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
+import { useConfirm } from "../../contexts/ConfirmContext";
 import { useToast } from "../../contexts/ToastContext";
 import {
 	adminHostsAPI,
@@ -1378,6 +1379,7 @@ const ReportModal = ({
 export const NotificationPanel = ({ panel }) => {
 	const queryClient = useQueryClient();
 	const toast = useToast();
+	const confirm = useConfirm();
 	const { canManageNotifications, canViewNotificationLogs, hasPermission } =
 		useAuth();
 	const canManage = canManageNotifications();
@@ -1423,15 +1425,19 @@ export const NotificationPanel = ({ panel }) => {
 		queryFn: () => hostGroupsAPI.list().then((r) => r.data ?? []),
 		enabled: canManage && canListHostGroups,
 	});
-	const { data: hostsList = [] } = useQuery({
+	const { data: hostsData } = useQuery({
 		queryKey: ["hosts-list"],
-		queryFn: () => adminHostsAPI.list().then((r) => r.data ?? []),
+		queryFn: () => adminHostsAPI.list().then((r) => r.data),
 		enabled: canManage && canListHostGroups,
 	});
 
 	const hostGroupOptions = useMemo(
 		() => (Array.isArray(hostGroups) ? hostGroups : []),
 		[hostGroups],
+	);
+	const hostOptions = useMemo(
+		() => (Array.isArray(hostsData?.data) ? hostsData.data : []),
+		[hostsData],
 	);
 	const destNameMap = useMemo(() => {
 		const m = {};
@@ -1753,8 +1759,14 @@ export const NotificationPanel = ({ panel }) => {
 														<button
 															type="button"
 															className="text-red-600 hover:text-red-700 inline-flex items-center gap-1 text-xs"
-															onClick={() => {
-																if (confirm("Delete this destination?"))
+															onClick={async () => {
+																if (
+																	await confirm({
+																		title: "Delete destination",
+																		message: `Delete the destination "${d.display_name}"?`,
+																		confirmLabel: "Delete destination",
+																	})
+																)
 																	deleteDest.mutate(d.id);
 															}}
 														>
@@ -1876,8 +1888,14 @@ export const NotificationPanel = ({ panel }) => {
 												<button
 													type="button"
 													className="text-red-600 hover:text-red-700 inline-flex items-center gap-1 text-xs"
-													onClick={() => {
-														if (confirm("Delete this route?"))
+													onClick={async () => {
+														if (
+															await confirm({
+																title: "Delete route",
+																message: "Delete this event route?",
+																confirmLabel: "Delete route",
+															})
+														)
 															deleteRoute.mutate(row.id);
 													}}
 												>
@@ -1986,8 +2004,14 @@ export const NotificationPanel = ({ panel }) => {
 												<button
 													type="button"
 													className="text-red-600 hover:text-red-700 inline-flex items-center gap-1 text-xs"
-													onClick={() => {
-														if (confirm("Delete this report?"))
+													onClick={async () => {
+														if (
+															await confirm({
+																title: "Delete scheduled report",
+																message: `Delete the scheduled report "${r.name}"?`,
+																confirmLabel: "Delete report",
+															})
+														)
 															deleteReport.mutate(r.id);
 													}}
 												>
@@ -2143,7 +2167,7 @@ export const NotificationPanel = ({ panel }) => {
 				editingRoute={routeModal.editing}
 				destinations={destinations}
 				hostGroups={hostGroupOptions}
-				hosts={Array.isArray(hostsList) ? hostsList : []}
+				hosts={hostOptions}
 				isPending={createRoute.isPending || updateRoute.isPending}
 			/>
 			<ReportModal

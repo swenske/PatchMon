@@ -1,12 +1,12 @@
 # Development stage - run with go run, source can be volume-mounted for live reload
 FROM golang:1.26-alpine AS development
 
-RUN apk add --no-cache git ca-certificates tzdata curl node npm
+RUN apk add --no-cache git ca-certificates tzdata curl nodejs npm
 
 WORKDIR /app
 
-# Copy agent scripts and binaries (same layout as production; run `make build-all-for-docker` in agent-source-code if agents-prebuilt is missing)
-COPY agents ./agents/
+# Copy agent binaries (run `make build-all-for-docker` in agent-source-code if agents-prebuilt is missing).
+# Scripts are not copied: they are go:embed'ed into the server binary.
 COPY --chmod=755 agents-prebuilt/patchmon-agent-* ./agents/
 
 # Build frontend for embed
@@ -14,7 +14,7 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm install --ignore-scripts --legacy-peer-deps 2>/dev/null || true
 COPY frontend/ ./
-RUN npm run build 2>/dev/null || mkdir -p dist && echo '<!DOCTYPE html><html><body>Build frontend first</body></html>' > dist/index.html
+RUN npm run build
 
 WORKDIR /app/server
 COPY server-source-code/ ./
@@ -61,7 +61,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY frontend/package.json ./frontend/
 
-RUN npm ci --workspace=patchmon-frontend --include=dev --ignore-scripts --no-audit \
+RUN npm ci --workspace=frontend --include=dev --ignore-scripts --no-audit \
     && npm cache clean --force
 
 COPY frontend/ ./frontend/
@@ -86,8 +86,51 @@ WORKDIR /app/server
 
 ARG TARGETOS
 ARG TARGETARCH
+# The git tag is the single source of truth for the version, and .dockerignore
+# excludes .git, so the version must be passed in. Use docker/build.sh, which
+# works it out from `git describe`, or pass it yourself:
+#   --build-arg VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+#
+# Only MAJOR.MINOR.PATCH is accepted. The server parses versions as
+# dot-separated integers and silently treats any suffix as 0, so a value like
+# "2.0.2-60-gABC" or "dev" would report as 2.0.0 and make the instance believe
+# an update is available.
+ARG VERSION=""
+# Community counts for the nav, login footer and setup wizard, read from
+# https://patchmon.net/socialstats/<platform> by the caller and passed in the
+# same way as VERSION. The build never fetches them itself, so it stays
+# hermetic and works with no network beyond the module proxy.
+#
+# Each is an integer. Omitted means "keep the compiled-in default"; 0 means the
+# endpoint could not determine the count and the number should be hidden.
+# Anything non-numeric is dropped rather than failing the build, because a bad
+# social count is never a reason to block a release.
+ARG GITHUB_STARS=""
+ARG DISCORD_MEMBERS=""
+ARG YOUTUBE_SUBSCRIBERS=""
+ARG LINKEDIN_FOLLOWERS=""
 RUN go mod download && \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -buildvcs=false -ldflags="-s -w" -o /app/patchmon-server ./cmd/server
+    VER="${VERSION#v}"; \
+    LDFLAGS="-s -w"; \
+    if [ -z "$VER" ]; then \
+      echo "WARNING: no VERSION build arg; this image will report 0.0.0. Use docker/build.sh." >&2; \
+    elif printf '%s' "$VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then \
+      LDFLAGS="$LDFLAGS -X github.com/PatchMon/PatchMon/server-source-code/internal/config.DefaultVersion=$VER"; \
+    else \
+      echo "ERROR: VERSION='$VER' is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-PRERELEASE" >&2; exit 1; \
+    fi; \
+    SOCIAL_PKG="github.com/PatchMon/PatchMon/server-source-code/internal/social"; \
+    for pair in "GitHubStars:$GITHUB_STARS" "DiscordMembers:$DISCORD_MEMBERS" \
+                "YouTubeSubscribers:$YOUTUBE_SUBSCRIBERS" "LinkedInFollowers:$LINKEDIN_FOLLOWERS"; do \
+      name="${pair%%:*}"; value="${pair#*:}"; \
+      if [ -z "$value" ]; then continue; fi; \
+      if printf '%s' "$value" | grep -qE '^[0-9]+$'; then \
+        LDFLAGS="$LDFLAGS -X $SOCIAL_PKG.$name=$value"; \
+      else \
+        echo "WARNING: ignoring non-numeric social count $name='$value'" >&2; \
+      fi; \
+    done; \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -buildvcs=false -ldflags="$LDFLAGS" -o /app/patchmon-server ./cmd/server
 
 # SSG content stage — download ComplianceAsCode datastream files at build time.
 # Pass --build-arg SSG_VERSION=0.1.80 to pin a specific version; otherwise
@@ -133,8 +176,8 @@ COPY --from=builder /app/patchmon-server ./
 # Copy SSG content (SCAP datastream files for compliance scanning)
 COPY --from=ssg-content /ssg-content ./ssg-content/
 
-# Copy agent scripts and binaries to /app/agents (in-image, read-only; no volume)
-COPY agents ./agents/
+# Copy agent binaries to /app/agents (in-image, read-only; no volume).
+# Scripts are not copied: they are go:embed'ed into the server binary.
 COPY --chmod=755 agents-prebuilt/patchmon-agent-* ./agents/
 
 # Entrypoint starts server (no volume copy; agents served from image)
