@@ -6,6 +6,7 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 )
 
 // UserApiTokenStore manages long-lived user API tokens for automation.
@@ -27,7 +28,7 @@ func (s *UserApiTokenStore) GetByHash(ctx context.Context, tokenHash string) (db
 	return d.Queries.GetUserApiTokenByHash(ctx, tokenHash)
 }
 
-func (s *UserApiTokenStore) Create(ctx context.Context, arg db.CreateUserApiTokenParams) (db.ListUserApiTokensRow, error) {
+func (s *UserApiTokenStore) Create(ctx context.Context, arg db.CreateUserApiTokenParams) (db.CreateUserApiTokenRow, error) {
 	d := s.db.DB(ctx)
 	return d.Queries.CreateUserApiToken(ctx, arg)
 }
@@ -55,8 +56,21 @@ func RowToUserApiTokenListItem(r db.ListUserApiTokensRow) UserApiTokenListItem {
 	return UserApiTokenListItem{
 		ID:         r.ID,
 		Name:       r.Name,
-		CreatedAt:  r.CreatedAt,
-		ExpiresAt:  r.ExpiresAt,
-		LastUsedAt: r.LastUsedAt,
+		CreatedAt:  r.CreatedAt.Time,
+		ExpiresAt:  pgtime.PtrTz(r.ExpiresAt),
+		LastUsedAt: pgtime.PtrTz(r.LastUsedAt),
 	}
 }
+
+// CreateRowToUserApiTokenListItem converts the row returned by Create, which
+// carries the same columns as ListUserApiTokens but under sqlc's own type.
+func CreateRowToUserApiTokenListItem(r db.CreateUserApiTokenRow) UserApiTokenListItem {
+	return UserApiTokenListItem{
+		ID:         r.ID,
+		Name:       r.Name,
+		CreatedAt:  r.CreatedAt.Time,
+		ExpiresAt:  pgtime.PtrTz(r.ExpiresAt),
+		LastUsedAt: pgtime.PtrTz(r.LastUsedAt),
+	}
+}
+

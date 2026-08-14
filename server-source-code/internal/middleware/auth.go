@@ -241,7 +241,7 @@ func handleUserApiToken(
 		return
 	}
 
-	if row.ExpiresAt != nil && time.Now().After(*row.ExpiresAt) {
+	if row.ExpiresAt.Valid && time.Now().After(row.ExpiresAt.Time) {
 		http.Error(w, `{"error":"API token expired"}`, http.StatusUnauthorized)
 		return
 	}
@@ -256,7 +256,7 @@ func handleUserApiToken(
 	}()
 
 	ctx := r.Context()
-	ctx = context.WithValue(ctx, UserIDKey, row.UId)
+	ctx = context.WithValue(ctx, UserIDKey, row.UID)
 	ctx = context.WithValue(ctx, UserRoleKey, row.URole)
 	next.ServeHTTP(w, r.WithContext(ctx))
 }
