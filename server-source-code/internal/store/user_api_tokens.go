@@ -73,4 +73,3 @@ func CreateRowToUserApiTokenListItem(r db.CreateUserApiTokenRow) UserApiTokenLis
 		LastUsedAt: pgtime.PtrTz(r.LastUsedAt),
 	}
 }
-
