@@ -139,6 +139,7 @@ func dbSettingToModel(s db.Setting) models.Settings {
 		PasswordRateLimitWindowMs:       pgInt32ToIntPtr(s.PasswordRateLimitWindowMs),
 		PasswordRateLimitMax:            pgInt32ToIntPtr(s.PasswordRateLimitMax),
 		AuthBrowserSessionCookies:       s.AuthBrowserSessionCookies,
+		PrometheusEnabled:               s.PrometheusEnabled,
 	}
 }
 
@@ -213,6 +214,7 @@ func settingsToUpdateParams(s *models.Settings) db.UpdateSettingsParams {
 		OidcEnforceHttps:          s.OidcEnforceHTTPS,
 		OidcTrustUnverifiedEmail:  s.OidcTrustUnverifiedEmail,
 		OidcLocalAuthFallback:     s.OidcLocalAuthFallback,
+		PrometheusEnabled:         s.PrometheusEnabled,
 		ID:                        s.ID,
 	}
 }
