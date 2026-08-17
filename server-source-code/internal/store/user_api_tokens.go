@@ -6,6 +6,8 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // UserApiTokenStore manages long-lived user API tokens for automation.
@@ -27,7 +29,7 @@ func (s *UserApiTokenStore) GetByHash(ctx context.Context, tokenHash string) (db
 	return d.Queries.GetUserApiTokenByHash(ctx, tokenHash)
 }
 
-func (s *UserApiTokenStore) Create(ctx context.Context, arg db.CreateUserApiTokenParams) (db.ListUserApiTokensRow, error) {
+func (s *UserApiTokenStore) Create(ctx context.Context, arg db.CreateUserApiTokenParams) (db.CreateUserApiTokenRow, error) {
 	d := s.db.DB(ctx)
 	return d.Queries.CreateUserApiToken(ctx, arg)
 }
@@ -52,11 +54,21 @@ type UserApiTokenListItem struct {
 }
 
 func RowToUserApiTokenListItem(r db.ListUserApiTokensRow) UserApiTokenListItem {
+	return userApiTokenListItem(r.ID, r.Name, r.CreatedAt, r.ExpiresAt, r.LastUsedAt)
+}
+
+// CreateRowToUserApiTokenListItem converts the row returned by Create (a
+// distinct sqlc type from ListUserApiTokensRow despite identical fields).
+func CreateRowToUserApiTokenListItem(r db.CreateUserApiTokenRow) UserApiTokenListItem {
+	return userApiTokenListItem(r.ID, r.Name, r.CreatedAt, r.ExpiresAt, r.LastUsedAt)
+}
+
+func userApiTokenListItem(id, name string, createdAt, expiresAt, lastUsedAt pgtype.Timestamptz) UserApiTokenListItem {
 	return UserApiTokenListItem{
-		ID:         r.ID,
-		Name:       r.Name,
-		CreatedAt:  r.CreatedAt,
-		ExpiresAt:  r.ExpiresAt,
-		LastUsedAt: r.LastUsedAt,
+		ID:         id,
+		Name:       name,
+		CreatedAt:  createdAt.Time.UTC(),
+		ExpiresAt:  pgtime.PtrTz(expiresAt),
+		LastUsedAt: pgtime.PtrTz(lastUsedAt),
 	}
 }
