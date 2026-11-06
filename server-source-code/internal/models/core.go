@@ -210,4 +210,5 @@ type Settings struct {
 	PasswordRateLimitWindowMs       *int       `db:"password_rate_limit_window_ms"`
 	PasswordRateLimitMax            *int       `db:"password_rate_limit_max"`
 	AuthBrowserSessionCookies       *bool      `db:"auth_browser_session_cookies"`
+	PrometheusEnabled               bool       `db:"prometheus_enabled"`
 }
